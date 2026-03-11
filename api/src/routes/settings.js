@@ -23,14 +23,36 @@ export default async function settingsRoutes(app) {
     },
   }, async (req, reply) => {
     const db = getDB();
+    
+    // Log what we're saving
+    console.log('[Settings] Saving settings:', Object.keys(req.body));
+    
     const unknown = Object.keys(req.body).filter(k => !ALLOWED_KEYS.has(k));
     if (unknown.length) {
+      console.warn('[Settings] Unknown keys rejected:', unknown);
       return reply.code(400).send({ error: `Unknown settings keys: ${unknown.join(', ')}` });
     }
+    
     const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
     db.transaction((entries) => {
-      for (const [key, value] of entries) upsert.run(key, String(value));
+      for (const [key, value] of entries) {
+        upsert.run(key, String(value));
+        console.log(`[Settings] Saved: ${key} = ${value}`);
+      }
     })(Object.entries(req.body));
-    return { success: true };
+    
+    return { success: true, saved: Object.keys(req.body) };
+  });
+  
+  // Debug endpoint to verify settings are persisted
+  app.get('/debug', { onRequest: [app.authenticate] }, async () => {
+    const db = getDB();
+    const rows = db.prepare('SELECT key, value FROM settings').all();
+    const dbPath = db.name;
+    return {
+      databasePath: dbPath,
+      settingsCount: rows.length,
+      settings: Object.fromEntries(rows.map(r => [r.key, r.value])),
+    };
   });
 }

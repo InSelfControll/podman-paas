@@ -98,7 +98,13 @@ export const api = {
   deployTemplateAsStack:(id,body) => request('POST', `/templates/${id}/deploy/stack`, body),
   // Settings
   getSettings:    ()     => request('GET', '/settings'),
-  updateSettings: (body) => request('PUT', '/settings', body),
+  updateSettings: (body) => {
+    // Ensure all values are strings for the backend
+    const stringifiedBody = Object.fromEntries(
+      Object.entries(body).map(([k, v]) => [k, String(v)])
+    );
+    return request('PUT', '/settings', stringifiedBody);
+  },
   // Users
   getUsers:       ()     => request('GET',    '/auth/users'),
   createUser:     (body) => request('POST',   '/auth/users', body),
