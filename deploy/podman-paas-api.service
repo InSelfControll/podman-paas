@@ -1,0 +1,31 @@
+# Systemd user service for PodPaaS API
+# Install:
+#   cp deploy/podman-paas-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now podman-paas-api
+
+[Unit]
+Description=PodPaaS API Server
+After=network.target podman.socket
+Requires=podman.socket
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/podman-paas/api
+ExecStart=/usr/bin/node src/index.js
+Restart=on-failure
+RestartSec=5s
+EnvironmentFile=%h/podman-paas/api/.env
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/podman-paas/data /tmp/podman-paas-builds /tmp/podman-paas-stacks
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=podman-paas
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,12 @@
+{
+  "name": "podman-paas",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "setup":          "bash scripts/setup.sh",
+    "dev:api":        "cd api && npm run dev",
+    "dev:frontend":   "cd frontend && npm run dev",
+    "start:api":      "cd api && npm start",
+    "install:all":    "cd api && npm install && cd ../frontend && npm install"
+  }
+}

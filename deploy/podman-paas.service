@@ -1,0 +1,31 @@
+[Unit]
+Description=PodPaaS - Podman PaaS Platform
+Documentation=https://github.com/yourusername/podman-paas
+Requires=podman.socket
+After=podman.socket network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/podman-paas
+Environment="PODMAN_SOCKET=/run/user/%U/podman/podman.sock"
+Environment="COMPOSE_CMD=podman-compose"
+Environment="PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin"
+
+# Start the services
+ExecStartPre=-/usr/bin/podman-compose down
+ExecStart=/usr/bin/podman-compose up
+
+# Stop gracefully
+ExecStop=/usr/bin/podman-compose down
+ExecStopPost=-/usr/bin/podman-compose rm -f
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Resource limits
+MemoryMax=1G
+TasksMax=100
+
+[Install]
+WantedBy=default.target

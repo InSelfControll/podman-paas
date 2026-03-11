@@ -1,0 +1,11 @@
+node_modules/
+data/
+.env
+*.db
+*.db-shm
+*.db-wal
+/tmp/
+dist/
+.DS_Store
+bun.lockb
+package-lock.json

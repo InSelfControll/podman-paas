@@ -1,0 +1,22 @@
+# Production Caddyfile
+# Replace 'yourdomain.com' with your actual domain
+
+{
+    admin localhost:2019
+    email admin@yourdomain.com   # For Let's Encrypt notifications
+    # Remove the line below to enable automatic HTTPS in production
+    # auto_https off
+}
+
+# PodPaaS dashboard
+paas.yourdomain.com {
+    reverse_proxy localhost:3001 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+# App routes are dynamically added by the API via Caddy Admin API
+# They will appear here as routes with @id labels

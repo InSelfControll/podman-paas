@@ -1,0 +1,46 @@
+{
+    # Admin API for dynamic configuration
+    admin localhost:2019
+    
+    # Auto HTTPS - disable for local dev, enable for production
+    auto_https off
+    
+    # Global options
+    persist_config off
+    
+    # Logging format
+    log {
+        format json
+    }
+}
+
+# Default HTTP server - handles all unmatched requests
+:80 {
+    # Health check endpoint
+    respond /health 200
+    
+    # Routes are added dynamically via Caddy Admin API by PodPaaS
+    # Each app gets a route based on its domain or name
+    
+    # Default response for unmatched hosts
+    handle {
+        respond "PodPaaS - No app configured for this domain" 404
+    }
+}
+
+# Production HTTPS configuration (uncomment for production with real domain)
+# {
+#     admin localhost:2019
+#     auto_https on
+#     email your-email@example.com  # For Let's Encrypt
+# }
+# 
+# your-domain.com {
+#     # PodPaaS API
+#     handle_path /api/* {
+#         reverse_proxy localhost:3001
+#     }
+#     
+#     # PodPaaS Frontend
+#     reverse_proxy localhost:5173
+# }
