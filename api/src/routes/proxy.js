@@ -22,6 +22,16 @@ import {
   listProxyContainers,
   generateProxyCompose,
 } from '../services/proxy/container-manager.js';
+import {
+  listConfigFiles,
+  readConfigFile,
+  writeConfigFile,
+  deleteConfigFile,
+  getConfigTemplates,
+  getMainConfig,
+  writeMainConfig,
+  getConfigDirectory,
+} from '../services/proxy/config-manager.js';
 
 export default async function proxyRoutes(app) {
   
@@ -492,5 +502,200 @@ export default async function proxyRoutes(app) {
     };
     
     return guides[type] || { error: 'Unknown proxy type' };
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PROXY CONFIGURATION FILE MANAGEMENT
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── List configuration files ────────────────────────────────────────────────
+  app.get('/config/files', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Configuration files not available for this proxy type' });
+    }
+    
+    try {
+      const files = listConfigFiles(config.type);
+      return { files, directory: getConfigDirectory(config.type) };
+    } catch (err) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  // ── Read configuration file ─────────────────────────────────────────────────
+  app.get('/config/files/:filename', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Configuration files not available for this proxy type' });
+    }
+    
+    try {
+      const result = readConfigFile(config.type, req.params.filename);
+      return result;
+    } catch (err) {
+      return reply.code(404).send({ error: err.message });
+    }
+  });
+
+  // ── Write configuration file ────────────────────────────────────────────────
+  app.put('/config/files/:filename', {
+    onRequest: [app.authenticate],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['content'],
+        properties: {
+          content: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Configuration files not available for this proxy type' });
+    }
+    
+    try {
+      const result = writeConfigFile(config.type, req.params.filename, req.body.content);
+      
+      // Try to reload proxy configuration
+      try {
+        const { getProxy } = await import('../services/proxy/proxy-factory.js');
+        const proxy = getProxy();
+        if (proxy.reload) {
+          await proxy.reload();
+        }
+      } catch (reloadErr) {
+        console.warn('[Proxy] Could not reload after config change:', reloadErr.message);
+      }
+      
+      return result;
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // ── Delete configuration file ───────────────────────────────────────────────
+  app.delete('/config/files/:filename', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Configuration files not available for this proxy type' });
+    }
+    
+    try {
+      const result = deleteConfigFile(config.type, req.params.filename);
+      return result;
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // ── Get main configuration file ─────────────────────────────────────────────
+  app.get('/config/main', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Configuration files not available for this proxy type' });
+    }
+    
+    try {
+      const result = getMainConfig(config.type);
+      return result;
+    } catch (err) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  // ── Update main configuration file ──────────────────────────────────────────
+  app.put('/config/main', {
+    onRequest: [app.authenticate],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['content'],
+        properties: {
+          content: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Configuration files not available for this proxy type' });
+    }
+    
+    try {
+      const result = writeMainConfig(config.type, req.body.content);
+      
+      // Try to reload proxy configuration
+      try {
+        const { getProxy } = await import('../services/proxy/proxy-factory.js');
+        const proxy = getProxy();
+        if (proxy.reload) {
+          await proxy.reload();
+        }
+      } catch (reloadErr) {
+        console.warn('[Proxy] Could not reload after config change:', reloadErr.message);
+      }
+      
+      return result;
+    } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // ── Get configuration templates ─────────────────────────────────────────────
+  app.get('/config/templates', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Templates not available for this proxy type' });
+    }
+    
+    try {
+      const templates = getConfigTemplates(config.type);
+      return { templates };
+    } catch (err) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  // ── Validate configuration ──────────────────────────────────────────────────
+  app.post('/config/validate', {
+    onRequest: [app.authenticate],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['content'],
+        properties: {
+          content: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (req, reply) => {
+    const config = getProxyConfig();
+    if (config.type === 'none' || config.type === 'custom') {
+      return reply.code(400).send({ error: 'Validation not available for this proxy type' });
+    }
+    
+    try {
+      // Import validation function
+      const { writeConfigFile } = await import('../services/proxy/config-manager.js');
+      
+      // Validation happens in writeConfigFile, so we use a test file
+      const testResult = writeConfigFile(config.type, '.validation-test', req.body.content);
+      
+      // Clean up test file
+      try {
+        const { deleteConfigFile } = await import('../services/proxy/config-manager.js');
+        deleteConfigFile(config.type, '.validation-test');
+      } catch {}
+      
+      return { valid: true, message: 'Configuration is valid' };
+    } catch (err) {
+      return { valid: false, error: err.message };
+    }
   });
 }
