@@ -219,11 +219,11 @@ function runMigrations() {
         CREATE INDEX IF NOT EXISTS idx_volume_mounts_app_id ON volume_mounts(app_id);
         CREATE INDEX IF NOT EXISTS idx_volume_mounts_stack_id ON volume_mounts(stack_id);
       `);
-      db.prepare('INSERT INTO schema_migrations (version) VALUES (4)').run(4);
+      db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(4);
       console.log('✅ Migration 4 applied: volumes and volume_mounts tables');
     } catch (err) {
       console.warn(`⚠️ Migration 4 skipped: ${err.message}`);
-      db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (4)').run(4);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(4);
     }
   }
 
@@ -253,11 +253,11 @@ function runMigrations() {
         CREATE INDEX IF NOT EXISTS idx_deployment_jobs_status ON deployment_jobs(status);
         CREATE INDEX IF NOT EXISTS idx_deployment_jobs_worker_id ON deployment_jobs(worker_id);
       `);
-      db.prepare('INSERT INTO schema_migrations (version) VALUES (5)').run(5);
+      db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(5);
       console.log('✅ Migration 5 applied: deployment_jobs table for worker thread tracking');
     } catch (err) {
       console.warn(`⚠️ Migration 5 skipped: ${err.message}`);
-      db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (5)').run(5);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (?)').run(5);
     }
   }
 
