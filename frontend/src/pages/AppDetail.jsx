@@ -25,6 +25,7 @@ export default function AppDetail() {
   const [activeDeployId, setActiveDeployId] = useState(null);
   const [webhookSecret, setWebhookSecret] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [logsCopied, setLogsCopied] = useState(false);
   const wsRef = useRef(null);
 
   const fetchApp = async () => {
@@ -284,7 +285,19 @@ export default function AppDetail() {
       {/* Logs */}
       {tab === 'logs' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <Button 
+              variant="secondary" 
+              size="sm" 
+              onClick={() => {
+                navigator.clipboard.writeText(logLines.join('\n'));
+                setLogsCopied(true);
+                setTimeout(() => setLogsCopied(false), 2000);
+              }}
+            >
+              {logsCopied ? <Check size={13} style={{ color: 'var(--accent)' }} /> : <Copy size={13} />} 
+              {logsCopied ? 'Copied!' : 'Copy All'}
+            </Button>
             <Button variant="ghost" size="sm" onClick={fetchLogs}><RefreshCw size={13} /> Refresh</Button>
           </div>
           <LogViewer lines={logLines} height={500} />
@@ -328,9 +341,31 @@ export default function AppDetail() {
         <div>
           {activeDeployId && (
             <Card style={{ marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                <Spinner size={14} />
-                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--accent)' }}>Deploying...</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Spinner size={14} />
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--accent)' }}>Deploying...</span>
+                </div>
+                {deployLogLines.length > 0 && (
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(deployLogLines.join('\n'));
+                      addToast({ message: 'Deployment logs copied', type: 'success' });
+                    }}
+                    style={{ 
+                      background: 'none', 
+                      border: 'none', 
+                      color: 'var(--text3)', 
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <Copy size={12} /> Copy
+                  </button>
+                )}
               </div>
               <LogViewer lines={deployLogLines} height={300} />
             </Card>

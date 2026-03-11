@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Layers, Play, Square, Trash2, RefreshCw, Container, Activity, Settings as SettingsIcon, Download, Upload, Users, Key, FileText, Terminal as TerminalIcon } from 'lucide-react';
+import { Plus, Layers, Play, Square, Trash2, RefreshCw, Container, Activity, Settings as SettingsIcon, Download, Upload, Users, Key, FileText, Terminal as TerminalIcon, Copy, Check } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
 import { Button, StatusBadge, Card, EmptyState, Modal, FormField, Spinner, Badge, LogViewer, Terminal } from '../components/ui.jsx';
@@ -100,7 +100,17 @@ export function StacksPage() {
       {/* Stack Logs Modal */}
       <Modal open={!!viewStack} onClose={() => { setViewStack(null); setStackLogs(''); }} title={viewStack ? `Logs: ${viewStack.name}` : 'Stack Logs'} width={800}>
         <LogViewer lines={stackLogs.split('\n').filter(Boolean)} height={400} />
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px' }}>
+          <Button 
+            size="sm" 
+            variant="secondary" 
+            onClick={() => {
+              navigator.clipboard.writeText(stackLogs);
+              addToast({ message: 'Logs copied to clipboard', type: 'success' });
+            }}
+          >
+            <Copy size={12} /> Copy All
+          </Button>
           <Button size="sm" variant="secondary" onClick={() => viewStack && viewStackLogs(viewStack)}>
             <RefreshCw size={12} /> Refresh
           </Button>
