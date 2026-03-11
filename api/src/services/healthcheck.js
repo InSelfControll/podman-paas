@@ -66,7 +66,7 @@ async function checkAppsHealth() {
       
       // Update if status changed
       if (expectedStatus !== app.status) {
-        db.prepare('UPDATE apps SET status = ?, updated_at = datetime("now") WHERE id = ?')
+        db.prepare("UPDATE apps SET status = ?, updated_at = datetime('now') WHERE id = ?")
           .run(expectedStatus, app.id);
         console.log(`[HealthCheck] App ${app.name}: ${app.status} → ${expectedStatus}`);
       }
@@ -150,7 +150,7 @@ async function checkStacksHealth() {
       }
       
       if (newStatus !== stack.status) {
-        db.prepare('UPDATE stacks SET status = ?, updated_at = datetime("now") WHERE id = ?')
+        db.prepare("UPDATE stacks SET status = ?, updated_at = datetime('now') WHERE id = ?")
           .run(newStatus, stack.id);
         console.log(`[HealthCheck] Stack ${stack.name}: ${stack.status} → ${newStatus}`);
       }
