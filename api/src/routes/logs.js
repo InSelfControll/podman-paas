@@ -1,11 +1,15 @@
 import { getDB } from '../db/database.js';
 import { getContainerLogs, podmanStream } from '../services/podman.js';
 import { subscribeToDeployment } from '../services/deploy.js';
+import { verifyWSTicket, generateWSTicketHandler } from '../services/ws-tickets.js';
 
 // How long a WebSocket may stay connected to a log stream (ms)
 const MAX_LOG_STREAM_MS = 30 * 60 * 1000; // 30 min
 
 export default async function logsRoutes(app) {
+
+  // ── REST: Create WebSocket ticket ─────────────────────────────────────────
+  app.post('/ticket', { onRequest: [app.authenticate] }, generateWSTicketHandler);
 
   // ── REST: recent container logs ─────────────────────────────────────────
   app.get('/app/:appId', { onRequest: [app.authenticate] }, async (req, reply) => {
@@ -24,16 +28,14 @@ export default async function logsRoutes(app) {
     // In @fastify/websocket v10, 'connection' IS the WebSocket instance
     const socket = connection;
     
-    // Authenticate via query param token (WebSocket can't send headers)
-    let user;
-    try {
-      const token = req.query.token;
-      if (!token) throw new Error('Missing token');
-      user = app.jwt.verify(token);
-    } catch {
+    // Authenticate via ticket (NOT JWT in query params for security)
+    const ticket = req.query.ticket;
+    const ticketData = verifyWSTicket(ticket, 'app', req.params.appId);
+    
+    if (!ticketData) {
       if (socket.readyState === 1) {
-        socket.send(JSON.stringify({ type: 'error', message: 'Unauthorized' }));
-        socket.close();
+        socket.send(JSON.stringify({ type: 'error', message: 'Invalid or expired ticket' }));
+        socket.close(4001, 'Unauthorized');
       }
       return;
     }
@@ -90,15 +92,14 @@ export default async function logsRoutes(app) {
     // In @fastify/websocket v10, 'connection' IS the WebSocket instance
     const socket = connection;
     
-    // Authenticate via query param token
-    try {
-      const token = req.query.token;
-      if (!token) throw new Error('Missing token');
-      app.jwt.verify(token);
-    } catch {
+    // Authenticate via ticket (NOT JWT in query params for security)
+    const ticket = req.query.ticket;
+    const ticketData = verifyWSTicket(ticket, 'deployment', req.params.deploymentId);
+    
+    if (!ticketData) {
       if (socket.readyState === 1) {
-        socket.send(JSON.stringify({ type: 'error', message: 'Unauthorized' }));
-        socket.close();
+        socket.send(JSON.stringify({ type: 'error', message: 'Invalid or expired ticket' }));
+        socket.close(4001, 'Unauthorized');
       }
       return;
     }

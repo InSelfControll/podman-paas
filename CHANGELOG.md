@@ -1,5 +1,140 @@
 # PodPaaS Changelog
 
+## v2.1.0 — Security Hardening & Volume Management
+
+### 🔒 Security Fixes (Critical)
+
+#### 1. Container Name Sanitization
+**Problem:** Malicious app names could lead to command injection in container operations.
+
+**Solution:**
+- Added `sanitizeContainerName()` function enforcing Docker naming rules
+- Forces lowercase, removes invalid characters, truncates to 63 chars
+- Applied to all container creation operations
+
+**Files Changed:**
+- `api/src/services/podman.js` — Added sanitization function
+- `api/src/services/deploy.js` — Applied sanitization to container names
+
+#### 2. Path Traversal Protection
+**Problem:** Dockerfile path validation could be bypassed using symlinks.
+
+**Solution:**
+- Updated `buildWithDockerfile()` to use `realpath()` for symlink resolution
+- Validates resolved path is within repository before build
+
+**Files Changed:**
+- `api/src/services/build.js` — Hardened path validation
+
+#### 3. WebSocket Ticket Authentication
+**Problem:** JWT tokens in URL query parameters leak to server logs, browser history, and referrer headers.
+
+**Solution:**
+- Implemented short-lived (30 sec), single-use tickets
+- HMAC-SHA256 signed with server secret
+- Tickets are resource-specific (app/deployment ID)
+
+**API Changes:**
+- New endpoint: `POST /api/logs/ticket` — Get WebSocket connection ticket
+- WebSocket URLs now use `?ticket=xxx` instead of `?token=xxx`
+
+**Files Changed:**
+- `api/src/services/ws-tickets.js` — New ticket service
+- `api/src/routes/logs.js` — Updated to ticket-based auth
+
+#### 4. Async bcrypt with Worker Threads
+**Problem:** Synchronous bcrypt operations blocked the Node.js event loop during authentication.
+
+**Solution:**
+- Offloaded bcrypt to worker threads for non-blocking operations
+- Worker pool (max 4) for efficient reuse
+- Async `hashPassword()` and `comparePassword()` functions
+
+**Files Changed:**
+- `api/src/services/crypto-worker.js` — Worker thread implementation
+- `api/src/services/crypto-service.js` — Async crypto API with pooling
+- `api/src/routes/auth.js` — Updated to async bcrypt
+- `api/src/db/database.js` — Async initialization
+
+### 🚀 New Features
+
+#### Volume Management
+Full CRUD support for persistent volumes with Podman integration.
+
+**API Endpoints:**
+```
+GET    /api/volumes              — List all volumes
+GET    /api/volumes/:id          — Get volume details
+POST   /api/volumes              — Create volume
+DELETE /api/volumes/:id          — Delete volume (if not in use)
+POST   /api/volumes/:id/attach   — Attach to app/stack
+DELETE /api/volumes/mounts/:id  — Detach volume
+POST   /api/volumes/prune        — Remove unused volumes
+GET    /api/volumes/drivers      — List available drivers
+```
+
+**Features:**
+- Multiple driver support (local, nfs, tmpfs)
+- Read-only mount option
+- Usage tracking (mount count, orphaned detection)
+- Podman state sync
+
+**Database Schema:**
+```sql
+CREATE TABLE volumes (id, name, driver, mount_point, size_mb, labels, created_at);
+CREATE TABLE volume_mounts (id, volume_id, app_id, stack_id, container_path, read_only);
+```
+
+**Files Changed:**
+- `api/src/services/volumes.js` — Volume business logic
+- `api/src/routes/volumes.js` — Volume API endpoints
+- `api/src/services/podman.js` — Volume CRUD functions
+- `api/src/db/database.js` — Migration 4 for volume tables
+- `api/src/index.js` — Registered volume routes
+
+### 🐛 Bug Fixes
+
+#### Deployment Stream Memory Leak
+**Problem:** `deployStreams` Map could grow unbounded with dead callbacks.
+
+**Solution:**
+- Auto-cleanup dead callbacks during `emitLog()`
+- Immediate cleanup when deployment completes
+- Removed duplicate cleanup timers
+
+**Files Changed:**
+- `api/src/services/deploy.js`
+
+### 📁 New Files
+
+| File | Purpose |
+|------|---------|
+| `api/src/services/crypto-worker.js` | Worker thread for bcrypt operations |
+| `api/src/services/crypto-service.js` | Async crypto API with worker pool |
+| `api/src/services/ws-tickets.js` | Secure ticket generation/verification |
+| `api/src/services/volumes.js` | Volume management business logic |
+| `api/src/routes/volumes.js` | Volume REST API endpoints |
+
+### 🔄 Migration Notes
+
+**Database:** Migration 4 runs automatically on startup, creating `volumes` and `volume_mounts` tables.
+
+**Frontend:** Update WebSocket connections to use tickets:
+```javascript
+// Get ticket first
+const { ticket } = await api.post('/logs/ticket', { 
+  resource_type: 'app', 
+  resource_id: appId 
+});
+
+// Then connect WebSocket
+const ws = new WebSocket(`wss://host/api/logs/app/${appId}/stream?ticket=${ticket}`);
+```
+
+**Breaking Change:** WebSocket endpoints no longer accept `?token=` parameter. Use tickets instead.
+
+---
+
 ## v2.0.0 — Multi-Proxy Support & Container Management
 
 ### 🚀 Major Features

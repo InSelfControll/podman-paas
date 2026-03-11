@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { mkdirSync } from 'fs';
-import bcrypt from 'bcryptjs';
+
 import { v4 as uuidv4 } from 'uuid';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -10,7 +10,7 @@ const DATA_DIR = process.env.DATA_DIR || join(__dirname, '../../../data');
 
 let db;
 
-export function initDB() {
+export async function initDB() {
   mkdirSync(DATA_DIR, { recursive: true });
 
   db = new Database(join(DATA_DIR, 'podman-paas.db'));
@@ -141,7 +141,7 @@ export function initDB() {
   // Seed default admin user
   const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get();
   if (userCount.c === 0) {
-    const hash = bcrypt.hashSync('admin', 12);
+    const hash = await hashPassword('admin', 12);
     db.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)')
       .run(uuidv4(), 'admin', hash);
     console.log('✅ Default admin user created (username: admin, password: admin) — change this immediately!');
@@ -183,6 +183,47 @@ function runMigrations() {
     // Note: container_ids and error_message are now in base schema (stacks table)
     // No need for migrations since new DBs get them via CREATE TABLE
   ];
+  
+  // Ensure ws_ticket_secret setting exists (auto-generated on first use)
+  // No explicit migration needed - handled by ws-tickets.js service
+  
+  // Migration 4: Create volumes and volume_mounts tables
+  if (!applied.has(4)) {
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS volumes (
+          id              TEXT PRIMARY KEY,
+          name            TEXT UNIQUE NOT NULL,
+          driver          TEXT DEFAULT 'local',
+          mount_point     TEXT,
+          size_mb         INTEGER,
+          labels          TEXT DEFAULT '{}',
+          created_at      TEXT DEFAULT (datetime('now'))
+        );
+        
+        CREATE TABLE IF NOT EXISTS volume_mounts (
+          id              TEXT PRIMARY KEY,
+          volume_id       TEXT NOT NULL,
+          app_id          TEXT,
+          stack_id        TEXT,
+          container_path  TEXT NOT NULL,
+          read_only       INTEGER DEFAULT 0,
+          FOREIGN KEY (volume_id) REFERENCES volumes(id) ON DELETE CASCADE,
+          FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+          FOREIGN KEY (stack_id) REFERENCES stacks(id) ON DELETE CASCADE
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_volume_mounts_volume_id ON volume_mounts(volume_id);
+        CREATE INDEX IF NOT EXISTS idx_volume_mounts_app_id ON volume_mounts(app_id);
+        CREATE INDEX IF NOT EXISTS idx_volume_mounts_stack_id ON volume_mounts(stack_id);
+      `);
+      db.prepare('INSERT INTO schema_migrations (version) VALUES (4)').run(4);
+      console.log('✅ Migration 4 applied: volumes and volume_mounts tables');
+    } catch (err) {
+      console.warn(`⚠️ Migration 4 skipped: ${err.message}`);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (4)').run(4);
+    }
+  }
 
   for (const m of migrations) {
     if (!applied.has(m.version)) {

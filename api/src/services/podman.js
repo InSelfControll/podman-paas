@@ -181,9 +181,31 @@ export async function listVolumes() {
   return Array.isArray(res.body) ? res.body : [];
 }
 
-export async function createVolume(name) {
-  const res = await podmanRequest('POST', '/volumes/create', { Name: name });
+export async function createVolume(name, options = {}) {
+  const body = {
+    Name: name,
+    Driver: options.driver || 'local',
+    DriverOpts: options.driver_opts || {},
+    Labels: options.labels || {}
+  };
+  const res = await podmanRequest('POST', '/volumes/create', body);
+  if (res.status !== 201 && res.status !== 200) {
+    throw new Error(res.body?.message || `Failed to create volume: ${res.status}`);
+  }
   return res.body;
+}
+
+export async function inspectVolume(name) {
+  const res = await podmanRequest('GET', `/volumes/${encodeURIComponent(name)}`);
+  if (res.status !== 200) {
+    throw new Error(res.body?.message || `Volume not found: ${res.status}`);
+  }
+  return res.body;
+}
+
+export async function removeVolume(name, force = false) {
+  const res = await podmanRequest('DELETE', `/volumes/${encodeURIComponent(name)}?force=${force}`);
+  return res.status === 204 || res.status === 200;
 }
 
 // ── System ───────────────────────────────────────────────────────────────────
@@ -203,6 +225,18 @@ export async function ping() {
 }
 
 // ── Port management ──────────────────────────────────────────────────────────
+
+/**
+ * Sanitize a name for use as a container name
+ * Docker/Podman rules: [a-zA-Z0-9][a-zA-Z0-9_.-]*, max 63 chars
+ */
+export function sanitizeContainerName(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, '-')
+    .replace(/^[^a-z0-9]/, 'a')
+    .substring(0, 63);
+}
 
 export async function findFreePort(start = 10000, end = 60000) {
   const containers = await listContainers();

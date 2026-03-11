@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
-import { mkdirSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, rmSync, existsSync, realpath } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
@@ -51,12 +51,22 @@ export function detectBuildMethod(repoPath) {
 export async function buildWithDockerfile(repoPath, tag, dockerfilePath = 'Dockerfile', buildArgs = {}, onLog) {
   onLog?.(`🔨 Building with Dockerfile: ${dockerfilePath}`);
 
-  // Prevent path traversal in dockerfile path
-  const safePath = resolve(repoPath, dockerfilePath);
-  if (!safePath.startsWith(resolve(repoPath) + '/') && safePath !== resolve(repoPath)) {
+  // Prevent path traversal - resolve and verify (follows symlinks)
+  const resolvedRepo = realpath(repoPath);
+  const safePath = resolve(resolvedRepo, dockerfilePath);
+  
+  // Check if path exists and resolve any symlinks
+  if (!existsSync(safePath)) {
+    throw new Error(`Dockerfile not found: ${dockerfilePath}`);
+  }
+  
+  const resolvedSafe = realpath(safePath);
+  
+  // Ensure the resolved path is still within repo (after symlink resolution)
+  const repoPrefix = resolvedRepo.endsWith('/') ? resolvedRepo : resolvedRepo + '/';
+  if (!resolvedSafe.startsWith(repoPrefix)) {
     throw new Error('Unsafe dockerfile path — path traversal detected');
   }
-  if (!existsSync(safePath)) throw new Error(`Dockerfile not found: ${dockerfilePath}`);
 
   return new Promise((resolve, reject) => {
     const args = ['build', '-t', tag, '-f', safePath];

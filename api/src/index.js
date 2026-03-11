@@ -21,6 +21,7 @@ import webhooksRoutes from './routes/webhooks.js';
 import backupRoutes from './routes/backup.js';
 import terminalRoutes from './routes/terminal.js';
 import proxyRoutes from './routes/proxy.js';
+import volumeRoutes from './routes/volumes.js';
 import { ping as podmanPing } from './services/podman.js';
 import { startHealthChecker } from './services/healthcheck.js';
 import { initProxySystem } from './services/proxy/proxy-factory.js';
@@ -147,7 +148,7 @@ app.setNotFoundHandler((request, reply) => {
 });
 
 // ── Database ───────────────────────────────────────────────────────────────
-initDB();
+await initDB();
 
 // ── Routes: auth with stricter rate limit ──────────────────────────────────
 app.register(async (instance) => {
@@ -173,6 +174,7 @@ app.register(webhooksRoutes,    { prefix: '/api/webhooks' });
 app.register(backupRoutes,      { prefix: '/api/backup' });
 app.register(terminalRoutes,    { prefix: '/api/terminal' });
 app.register(proxyRoutes,       { prefix: '/api/proxy' });
+app.register(volumeRoutes,      { prefix: '/api/volumes' });
 
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/health', async (req, reply) => {

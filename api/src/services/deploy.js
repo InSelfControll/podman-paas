@@ -3,7 +3,7 @@ import { getDB } from '../db/database.js';
 import {
   createContainer, startContainer, stopContainer,
   removeContainer, findFreePort, ensureNetwork, getContainer,
-  pullImage, restartContainer,
+  pullImage, restartContainer, sanitizeContainerName,
 } from './podman.js';
 import { registerAppRoute, removeAppRoute } from './proxy/proxy-factory.js';
 import { runBuildPipeline } from './build.js';
@@ -21,7 +21,32 @@ export function subscribeToDeployment(deploymentId, callback) {
 }
 
 function emitLog(deploymentId, message) {
-  deployStreams.get(deploymentId)?.forEach(fn => { try { fn(message); } catch {} });
+  const callbacks = deployStreams.get(deploymentId);
+  if (!callbacks) return;
+  
+  // Clean up dead callbacks and track if any succeeded
+  const deadCallbacks = new Set();
+  for (const fn of callbacks) {
+    try { 
+      fn(message); 
+    } catch (e) { 
+      deadCallbacks.add(fn);
+    }
+  }
+  
+  // Remove dead callbacks
+  for (const fn of deadCallbacks) {
+    callbacks.delete(fn);
+  }
+  
+  // If no more callbacks and deployment is complete, clean up immediately
+  if (callbacks.size === 0) {
+    const db = getDB();
+    const deployment = db.prepare('SELECT status FROM deployments WHERE id = ?').get(deploymentId);
+    if (deployment?.status !== 'running') {
+      deployStreams.delete(deploymentId);
+    }
+  }
 }
 
 // ── Deploy ───────────────────────────────────────────────────────────────────
@@ -58,7 +83,7 @@ async function runDeployWithTimeout(app, deploymentId) {
     db.prepare(`UPDATE apps SET status = 'error', updated_at = datetime('now') WHERE id = ?`).run(app.id);
     db.prepare(`UPDATE deployments SET status = 'failed', finished_at = datetime('now') WHERE id = ?`).run(deploymentId);
     emitLog(deploymentId, `\n❌ ${err.message}`);
-    setTimeout(() => deployStreams.delete(deploymentId), 120_000);
+    // Note: cleanup is handled in runDeploy's finally block
   }
 }
 
@@ -105,7 +130,7 @@ async function runDeploy(app, deploymentId) {
     }
 
     // --- Tear down old container ---
-    const containerName = `paas-${app.name}`;
+    const containerName = `paas-${sanitizeContainerName(app.name)}`;
     const oldContainer = await getContainer(containerName).catch(() => null);
     if (oldContainer) {
       log(`🔄 Stopping old container...`);
