@@ -45,6 +45,60 @@ export default async function proxyRoutes(app) {
     return getProxyStatus();
   });
 
+  // ── Get proxy setup status (comprehensive) ─────────────────────────────────
+  app.get('/setup-status', { onRequest: [app.authenticate] }, async () => {
+    const config = getProxyConfig();
+    const status = await getProxyStatus();
+    
+    // Get container status if applicable
+    let containerStatus = null;
+    let canDeploy = false;
+    let actions = [];
+    
+    if (config.type !== 'none' && config.type !== 'custom') {
+      containerStatus = await getProxyContainerStatus(config.type);
+      
+      // Determine available actions
+      if (!containerStatus.exists) {
+        canDeploy = true;
+        actions = ['deploy'];
+      } else if (containerStatus.state === 'running') {
+        actions = ['stop', 'restart', 'remove'];
+      } else if (containerStatus.state === 'exited' || containerStatus.state === 'stopped') {
+        actions = ['start', 'restart', 'remove'];
+      } else {
+        actions = ['restart', 'remove'];
+      }
+    }
+    
+    return {
+      config,
+      status,
+      container: containerStatus,
+      canDeploy,
+      actions,
+      needsConfiguration: config.type === 'none',
+      needsDeployment: config.type !== 'none' && config.type !== 'custom' && !containerStatus?.exists,
+      message: getSetupMessage(config, containerStatus),
+    };
+  });
+
+  function getSetupMessage(config, containerStatus) {
+    if (config.type === 'none') {
+      return 'Select a reverse proxy type in settings to enable automatic routing';
+    }
+    if (config.type === 'custom') {
+      return 'Using custom external proxy - configure manually';
+    }
+    if (!containerStatus?.exists) {
+      return `Proxy configured (${config.type}) but container not deployed. Click Deploy to create the container.`;
+    }
+    if (containerStatus.state !== 'running') {
+      return `Proxy container exists but is ${containerStatus.state}. Start it to enable routing.`;
+    }
+    return `Proxy (${config.type}) is running and managing routes`;
+  }
+
   // ── Update proxy configuration ──────────────────────────────────────────────
   app.patch('/config', {
     onRequest: [app.authenticate],
@@ -65,14 +119,31 @@ export default async function proxyRoutes(app) {
     },
   }, async (req, reply) => {
     const updates = req.body;
+    const previousType = getProxyConfig().type;
     const config = updateProxyConfig(updates);
     
     // If proxy type changed, reinitialize
-    if (updates.type) {
+    if (updates.type && updates.type !== previousType) {
       await initProxySystem();
     }
     
-    return config;
+    // Get container status to determine if deployment is needed
+    let containerStatus = null;
+    let needsDeployment = false;
+    
+    if (config.type !== 'none' && config.type !== 'custom') {
+      containerStatus = await getProxyContainerStatus(config.type);
+      needsDeployment = !containerStatus.exists;
+    }
+    
+    return {
+      config,
+      container: containerStatus,
+      needsDeployment,
+      message: needsDeployment 
+        ? `Proxy configured as ${config.type}. Deploy the container to enable routing.`
+        : `Proxy configuration updated`,
+    };
   });
 
   // ── Test proxy connection ───────────────────────────────────────────────────
@@ -94,6 +165,77 @@ export default async function proxyRoutes(app) {
       return { exists: false, message: 'Proxy type does not support containers' };
     }
     return getProxyContainerStatus(config.type);
+  });
+
+  // ── Quick setup: save config and deploy ────────────────────────────────────
+  app.post('/setup', {
+    onRequest: [app.authenticate],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['type'],
+        properties: {
+          type: { type: 'string', enum: ['caddy', 'nginx', 'traefik'] },
+          containerName: { type: 'string' },
+          domainSuffix: { type: 'string' },
+          autoSsl: { type: 'boolean' },
+          force: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (req, reply) => {
+    const { type, containerName, domainSuffix, autoSsl, force } = req.body;
+    
+    // Step 1: Save configuration
+    const config = updateProxyConfig({
+      type,
+      mode: 'container',
+      ...(containerName && { containerName }),
+      ...(domainSuffix && { domainSuffix }),
+      ...(autoSsl !== undefined && { autoSsl }),
+    });
+    
+    // Reinitialize proxy system
+    await initProxySystem();
+    
+    // Step 2: Check if container already exists
+    const existingStatus = await getProxyContainerStatus(type);
+    if (existingStatus.exists && !force) {
+      return reply.code(409).send({
+        error: 'Proxy container already exists. Use force: true to recreate.',
+        config,
+        container: existingStatus,
+      });
+    }
+    
+    // Step 3: Deploy container
+    try {
+      const deployResult = await deployProxyContainer(type, {
+        containerName: containerName || config.containerName,
+      });
+      
+      // Update config with deployment info
+      updateProxyConfig({
+        mode: 'container',
+        containerName: deployResult.name,
+        adminUrl: deployResult.adminUrl || `http://${deployResult.name}:${type === 'traefik' ? '8080' : '2019'}`,
+      });
+      
+      return {
+        success: true,
+        message: `Proxy (${type}) configured and deployed successfully`,
+        config: getProxyConfig(),
+        container: deployResult,
+      };
+    } catch (err) {
+      console.error('[Proxy] Setup failed:', err);
+      return reply.code(500).send({
+        error: err.message,
+        config,
+        details: 'Configuration saved but container deployment failed',
+      });
+    }
   });
 
   // ── Deploy proxy container ──────────────────────────────────────────────────
