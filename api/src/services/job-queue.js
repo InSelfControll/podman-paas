@@ -103,18 +103,19 @@ export async function recoverStaleJobs() {
 export async function processPendingJobs() {
   const db = getDB();
   
+  // Count pending jobs first
+  const pendingCount = db.prepare("SELECT COUNT(*) as c FROM deployment_jobs WHERE status = 'pending'").get().c;
+  if (pendingCount === 0) {
+    return; // Nothing to do
+  }
+  
   // Get pool stats to check capacity
   const stats = getPoolStats();
   const deploymentPool = stats.deployment;
   
-  if (!deploymentPool) {
-    console.warn('[JobQueue] Deployment pool not available');
-    return;
-  }
-  
   // Calculate available slots
   const maxConcurrency = parseInt(process.env.DEPLOY_CONCURRENCY || '2', 10);
-  const runningInPool = deploymentPool.threads; // Active workers
+  const runningInPool = deploymentPool?.threads || 0; // Active workers (0 if pool not created yet)
   const availableSlots = maxConcurrency - runningInPool;
   
   if (availableSlots <= 0) {
