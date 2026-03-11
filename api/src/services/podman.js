@@ -1,4 +1,5 @@
 import http from 'http';
+import net from 'net';
 import { getDB } from '../db/database.js';
 
 function getSocketPath() {
@@ -238,7 +239,35 @@ export function sanitizeContainerName(name) {
     .substring(0, 63);
 }
 
+/**
+ * Check if a port is actually available on the host
+ * @param {number} port - Port to check
+ * @returns {Promise<boolean>} - True if port is available
+ */
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        resolve(false); // Port is in use
+      } else {
+        resolve(false); // Other error, treat as unavailable
+      }
+    });
+    
+    server.once('listening', () => {
+      server.close(() => {
+        resolve(true); // Port is available
+      });
+    });
+    
+    server.listen(port, '0.0.0.0');
+  });
+}
+
 export async function findFreePort(start = 10000, end = 60000) {
+  // First, get ports from containers and DB as candidates to skip
   const containers = await listContainers();
   const usedPorts = new Set();
   for (const c of containers) {
@@ -253,8 +282,17 @@ export async function findFreePort(start = 10000, end = 60000) {
     for (const r of rows) usedPorts.add(r.host_port);
   } catch {}
 
+  // Try ports, checking actual availability with net.Server
   for (let port = start; port <= end; port++) {
-    if (!usedPorts.has(port)) return port;
+    // Skip if we already know it's used
+    if (usedPorts.has(port)) continue;
+    
+    // Actually check if port is available on host
+    const available = await isPortAvailable(port);
+    if (available) {
+      return port;
+    }
   }
+  
   throw new Error('No free port available in range');
 }

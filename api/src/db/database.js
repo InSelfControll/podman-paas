@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { mkdirSync } from 'fs';
 
 import { v4 as uuidv4 } from 'uuid';
+import bcrypt from 'bcryptjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || join(__dirname, '../../../data');
@@ -139,9 +140,10 @@ export async function initDB() {
   runMigrations();
 
   // Seed default admin user
+  // Note: Using sync bcrypt here since this is one-time initialization
   const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get();
   if (userCount.c === 0) {
-    const hash = await hashPassword('admin', 12);
+    const hash = bcrypt.hashSync('admin', 12);
     db.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)')
       .run(uuidv4(), 'admin', hash);
     console.log('✅ Default admin user created (username: admin, password: admin) — change this immediately!');
@@ -222,6 +224,40 @@ function runMigrations() {
     } catch (err) {
       console.warn(`⚠️ Migration 4 skipped: ${err.message}`);
       db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (4)').run(4);
+    }
+  }
+
+  // Migration 5: Create deployment_jobs table for worker thread tracking
+  if (!applied.has(5)) {
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS deployment_jobs (
+          id              TEXT PRIMARY KEY,
+          app_id          TEXT NOT NULL,
+          deployment_id   TEXT NOT NULL,
+          status          TEXT DEFAULT 'pending',
+          current_step    TEXT DEFAULT 'init',
+          progress_pct    INTEGER DEFAULT 0,
+          trigger         TEXT DEFAULT 'manual',
+          error_message   TEXT,
+          log             TEXT DEFAULT '',
+          worker_id       TEXT,
+          started_at      TEXT DEFAULT (datetime('now')),
+          finished_at     TEXT,
+          heartbeat_at    TEXT,
+          FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+          FOREIGN KEY (deployment_id) REFERENCES deployments(id) ON DELETE CASCADE
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_deployment_jobs_app_id ON deployment_jobs(app_id);
+        CREATE INDEX IF NOT EXISTS idx_deployment_jobs_status ON deployment_jobs(status);
+        CREATE INDEX IF NOT EXISTS idx_deployment_jobs_worker_id ON deployment_jobs(worker_id);
+      `);
+      db.prepare('INSERT INTO schema_migrations (version) VALUES (5)').run(5);
+      console.log('✅ Migration 5 applied: deployment_jobs table for worker thread tracking');
+    } catch (err) {
+      console.warn(`⚠️ Migration 5 skipped: ${err.message}`);
+      db.prepare('INSERT OR IGNORE INTO schema_migrations (version) VALUES (5)').run(5);
     }
   }
 

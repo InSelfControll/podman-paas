@@ -7,9 +7,9 @@ import {
 } from './podman.js';
 import { registerAppRoute, removeAppRoute } from './proxy/proxy-factory.js';
 import { runBuildPipeline } from './build.js';
+import { createDeploymentJob, getJob } from './job-queue.js';
 
 const PAAS_NETWORK = 'podman-paas';
-const DEPLOY_TIMEOUT_MS = parseInt(process.env.DEPLOY_TIMEOUT_MS || '900000', 10); // 15 min
 
 // In-memory pub/sub for live deployment log streaming
 const deployStreams = new Map(); // deploymentId → Set<callback>
@@ -66,34 +66,106 @@ export async function deployApp(appId, trigger = 'manual') {
   db.prepare(`INSERT INTO deployments (id, app_id, status, trigger) VALUES (?, ?, 'running', ?)`)
     .run(deploymentId, appId, trigger);
 
-  // Fire-and-forget — response returns immediately with deploymentId
-  runDeployWithTimeout(app, deploymentId).catch(() => {}); // errors handled inside
+  // Create a job for the worker pool
+  const { jobId } = await createDeploymentJob(appId, deploymentId, trigger);
+  
+  // Start deployment in background (non-blocking)
+  // Note: The actual work is done in the worker thread via job-queue.js
+  runDeployBackground(app, deploymentId, jobId).catch((err) => {
+    console.error(`[Deploy] Background deployment error: ${err.message}`);
+  });
 
-  return { deploymentId };
+  return { deploymentId, jobId };
 }
 
-async function runDeployWithTimeout(app, deploymentId) {
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`Deployment timed out after ${DEPLOY_TIMEOUT_MS / 60000} minutes`)), DEPLOY_TIMEOUT_MS)
-  );
+/**
+ * Background deployment that coordinates with the worker thread
+ */
+async function runDeployBackground(app, deploymentId, jobId) {
+  const db = getDB();
+  const appId = app.id;
+  
+  const log = (msg) => {
+    emitLog(deploymentId, msg);
+    // Append to persistent log (truncate at 500KB to avoid DB bloat)
+    try {
+      const existing = db.prepare('SELECT log FROM deployments WHERE id = ?').get(deploymentId);
+      const current = existing?.log || '';
+      if (current.length < 500_000) {
+        db.prepare('UPDATE deployments SET log = log || ? WHERE id = ?').run(msg + '\n', deploymentId);
+      }
+    } catch {}
+  };
+
   try {
-    await Promise.race([runDeploy(app, deploymentId), timeoutPromise]);
+    log(`🚀 Deploying ${app.name} [${new Date().toISOString()}]`);
+    log(`📋 Job ID: ${jobId}`);
+
+    // Poll for job completion
+    const maxWaitTime = 15 * 60 * 1000; // 15 minutes
+    const startTime = Date.now();
+    const pollInterval = 1000; // Check every second
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      const job = getJob(jobId);
+      
+      if (!job) {
+        throw new Error('Job not found');
+      }
+      
+      // Log progress updates
+      if (job.current_step && job.progress_pct > 0) {
+        log(`⏳ ${job.current_step}: ${job.progress_pct}%`);
+      }
+      
+      // Check if completed
+      if (job.status === 'completed') {
+        log(`\n🎉 Deployment complete!`);
+        
+        // Update deployment status
+        db.prepare(`
+          UPDATE deployments SET status = 'success', finished_at = datetime('now') WHERE id = ?
+        `).run(deploymentId);
+        
+        // Update app status
+        db.prepare(`
+          UPDATE apps SET status = 'running', updated_at = datetime('now') WHERE id = ?
+        `).run(appId);
+        
+        return;
+      }
+      
+      // Check if failed
+      if (job.status === 'failed') {
+        throw new Error(job.error_message || 'Deployment failed');
+      }
+      
+      // Still running, wait and poll again
+      await new Promise(r => setTimeout(r, pollInterval));
+    }
+    
+    throw new Error('Deployment timed out after 15 minutes');
+
   } catch (err) {
-    const db = getDB();
-    db.prepare(`UPDATE apps SET status = 'error', updated_at = datetime('now') WHERE id = ?`).run(app.id);
+    log(`\n❌ Deployment failed: ${err.message}`);
+
+    db.prepare(`UPDATE apps SET status = 'error', updated_at = datetime('now') WHERE id = ?`).run(appId);
     db.prepare(`UPDATE deployments SET status = 'failed', finished_at = datetime('now') WHERE id = ?`).run(deploymentId);
-    emitLog(deploymentId, `\n❌ ${err.message}`);
-    // Note: cleanup is handled in runDeploy's finally block
+
+  } finally {
+    // Keep stream alive 2 min for late-joining subscribers, then GC
+    setTimeout(() => deployStreams.delete(deploymentId), 120_000);
   }
 }
 
-async function runDeploy(app, deploymentId) {
+// ── Legacy Direct Deploy (fallback for simple operations) ─────────────────────
+
+export async function runDirectDeploy(app, deploymentId) {
   const db = getDB();
   const appId = app.id;
 
   const log = (msg) => {
     emitLog(deploymentId, msg);
-    // Append to persistent log (truncate at 500KB to avoid DB bloat)
     try {
       const existing = db.prepare('SELECT log FROM deployments WHERE id = ?').get(deploymentId);
       const current = existing?.log || '';

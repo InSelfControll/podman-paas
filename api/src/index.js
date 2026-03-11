@@ -25,6 +25,8 @@ import volumeRoutes from './routes/volumes.js';
 import { ping as podmanPing } from './services/podman.js';
 import { startHealthChecker } from './services/healthcheck.js';
 import { initProxySystem } from './services/proxy/proxy-factory.js';
+import { startJobQueue } from './services/job-queue.js';
+import { shutdownPools } from './workers/pool.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -182,6 +184,10 @@ app.get('/health', async (req, reply) => {
   const db = getDB();
   const dbOk = db && db.open;
   
+  // Get worker pool stats
+  const { getPoolStats } = await import('./workers/pool.js');
+  const poolStats = getPoolStats();
+  
   const status = podmanOk && dbOk ? 'ok' : 'degraded';
   const code = status === 'ok' ? 200 : 503;
   
@@ -192,6 +198,7 @@ app.get('/health', async (req, reply) => {
     services: {
       podman: podmanOk ? 'connected' : 'disconnected',
       database: dbOk ? 'connected' : 'disconnected',
+      workers: poolStats,
     },
     version: process.env.npm_package_version || '1.0.0',
   });
@@ -219,6 +226,9 @@ try {
   
   // Initialize proxy system
   await initProxySystem();
+  
+  // Start deployment job queue (Piscina worker pool)
+  startJobQueue();
 } catch (err) {
   app.log.error(err);
   process.exit(1);
@@ -227,6 +237,12 @@ try {
 // ── Graceful shutdown ──────────────────────────────────────────────────────
 async function shutdown(signal) {
   app.log.info(`${signal} — shutting down`);
+  
+  // Shutdown worker pools first
+  await shutdownPools().catch(err => {
+    app.log.error({ err }, 'Error shutting down worker pools');
+  });
+  
   await app.close().catch(() => {});
   process.exit(0);
 }

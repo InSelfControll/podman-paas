@@ -1,6 +1,6 @@
 import { getDB } from '../db/database.js';
 import { v4 as uuidv4 } from 'uuid';
-import { hashPassword, comparePassword } from '../services/crypto-service.js';
+import { runCryptoHash, runCryptoCompare } from '../workers/pool.js';
 
 export default async function authRoutes(app) {
   // Login
@@ -24,7 +24,7 @@ export default async function authRoutes(app) {
     // Constant-time check (avoid timing attacks)
     const dummyHash = '$2a$12$abcdefghijklmnopqrstuvuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu';
     const hashToCheck = user ? user.password_hash : dummyHash;
-    const valid = await comparePassword(password, hashToCheck);
+    const valid = await runCryptoCompare(password, hashToCheck);
 
     if (!user || !valid) {
       // Consistent delay to prevent timing-based user enumeration
@@ -61,12 +61,12 @@ export default async function authRoutes(app) {
     const db = getDB();
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
 
-    const passwordValid = await comparePassword(current_password, user.password_hash);
+    const passwordValid = await runCryptoCompare(current_password, user.password_hash);
     if (!passwordValid) {
       return reply.code(401).send({ error: 'Current password incorrect' });
     }
 
-    const hash = await hashPassword(new_password, 12); // bcrypt cost 12 for production
+    const hash = await runCryptoHash(new_password, 12); // bcrypt cost 12 for production
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
     req.log.info({ userId: req.user.id }, 'Password changed');
     return { success: true };
@@ -111,7 +111,7 @@ export default async function authRoutes(app) {
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
     if (existing) return reply.code(409).send({ error: 'Username already exists' });
 
-    const hash = await hashPassword(password, 12);
+    const hash = await runCryptoHash(password, 12);
     const id = uuidv4();
     db.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)').run(id, username, hash);
     req.log.info({ username }, 'User created');
