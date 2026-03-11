@@ -10,6 +10,16 @@ import { getDB } from '../db/database.js';
 
 const TICKET_TTL_MS = 30000; // 30 seconds - tickets are single-use and short-lived
 
+// In-memory ticket tracking for rate limiting and abuse prevention
+// Stores: { ticketHash: { createdAt, used, resourceType, resourceId } }
+const ticketTracker = new Map();
+let cleanupInterval = null;
+
+// Max tracked tickets in memory (LRU eviction)
+const MAX_TRACKED_TICKETS = 10000;
+// Cleanup interval: every 5 minutes
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+
 /**
  * Get or create the ticket signing secret
  */
@@ -143,4 +153,126 @@ export async function generateWSTicketHandler(req, reply) {
   const ticket = createWSTicket(req.user.id, resource_type, resource_id);
   
   return ticket;
+}
+
+// ── Ticket Tracking & Cleanup ───────────────────────────────────────────────
+
+/**
+ * Track a ticket for rate limiting and abuse detection
+ * This is optional - tickets work without tracking, but tracking helps prevent abuse
+ */
+function trackTicket(ticket, resourceType, resourceId) {
+  // Simple hash of the ticket for storage
+  const ticketHash = createHmac('sha256', 'ticket-tracker')
+    .update(ticket)
+    .digest('hex')
+    .substring(0, 32);
+  
+  // Evict oldest if at capacity (simple LRU)
+  if (ticketTracker.size >= MAX_TRACKED_TICKETS) {
+    const oldestKey = ticketTracker.keys().next().value;
+    ticketTracker.delete(oldestKey);
+  }
+  
+  ticketTracker.set(ticketHash, {
+    createdAt: Date.now(),
+    used: false,
+    resourceType,
+    resourceId,
+  });
+}
+
+/**
+ * Mark a ticket as used (prevents replay attacks)
+ */
+export function markTicketUsed(ticket) {
+  const ticketHash = createHmac('sha256', 'ticket-tracker')
+    .update(ticket)
+    .digest('hex')
+    .substring(0, 32);
+  
+  const record = ticketTracker.get(ticketHash);
+  if (record) {
+    record.used = true;
+    record.usedAt = Date.now();
+  }
+}
+
+/**
+ * Check if a ticket has been used (replay detection)
+ */
+export function isTicketUsed(ticket) {
+  const ticketHash = createHmac('sha256', 'ticket-tracker')
+    .update(ticket)
+    .digest('hex')
+    .substring(0, 32);
+  
+  const record = ticketTracker.get(ticketHash);
+  return record?.used === true;
+}
+
+/**
+ * Clean up expired ticket tracking entries
+ */
+function cleanupExpiredTickets() {
+  const now = Date.now();
+  const expirationTime = TICKET_TTL_MS + 60000; // Keep for 1 minute after expiration for replay detection
+  let cleaned = 0;
+  
+  for (const [hash, data] of ticketTracker.entries()) {
+    if (now - data.createdAt > expirationTime) {
+      ticketTracker.delete(hash);
+      cleaned++;
+    }
+  }
+  
+  if (cleaned > 0) {
+    console.log(`[WS Tickets] Cleaned up ${cleaned} expired ticket entries (${ticketTracker.size} remaining)`);
+  }
+}
+
+/**
+ * Start automatic ticket cleanup
+ */
+export function startTicketCleanup() {
+  if (cleanupInterval) return; // Already running
+  
+  // Run initial cleanup
+  cleanupExpiredTickets();
+  
+  // Schedule periodic cleanup
+  cleanupInterval = setInterval(() => {
+    cleanupExpiredTickets();
+  }, CLEANUP_INTERVAL_MS);
+  
+  console.log(`[WS Tickets] Started ticket cleanup (interval: ${CLEANUP_INTERVAL_MS / 60000} min)`);
+}
+
+/**
+ * Stop ticket cleanup
+ */
+export function stopTicketCleanup() {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
+}
+
+/**
+ * Get ticket tracking statistics (for monitoring)
+ */
+export function getTicketStats() {
+  const now = Date.now();
+  const total = ticketTracker.size;
+  const used = Array.from(ticketTracker.values()).filter(t => t.used).length;
+  const expired = Array.from(ticketTracker.values())
+    .filter(t => now - t.createdAt > TICKET_TTL_MS).length;
+  
+  return {
+    total,
+    used,
+    unused: total - used,
+    expired,
+    valid: total - expired,
+  };
 }

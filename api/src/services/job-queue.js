@@ -248,6 +248,85 @@ export function getQueueStatus() {
 }
 
 /**
+ * Recover orphaned builds on startup
+ * 
+ * This handles the case where the main process crashed while apps were in 'building' state
+ * but no corresponding job exists (e.g., before job was created or job was lost).
+ */
+export async function recoverOrphanedBuilds() {
+  const db = getDB();
+  
+  console.log('[JobQueue] Checking for orphaned builds...');
+  
+  // Find apps in 'building' state with no associated running/pending job
+  const orphanedApps = db.prepare(`
+    SELECT a.* FROM apps a
+    WHERE a.status = 'building'
+    AND NOT EXISTS (
+      SELECT 1 FROM deployment_jobs dj
+      WHERE dj.app_id = a.id
+      AND dj.status IN ('pending', 'running')
+    )
+  `).all();
+  
+  if (orphanedApps.length === 0) {
+    console.log('[JobQueue] No orphaned builds found');
+    return 0;
+  }
+  
+  console.log(`[JobQueue] Found ${orphanedApps.length} orphaned builds to recover`);
+  
+  for (const app of orphanedApps) {
+    console.log(`[JobQueue] Recovering orphaned build for app: ${app.name} (${app.id})`);
+    
+    // Find the most recent deployment for this app
+    const lastDeployment = db.prepare(`
+      SELECT * FROM deployments
+      WHERE app_id = ?
+      ORDER BY started_at DESC
+      LIMIT 1
+    `).get(app.id);
+    
+    if (lastDeployment && lastDeployment.status === 'running') {
+      // Create a job to resume this deployment
+      const jobId = uuidv4();
+      db.prepare(`
+        INSERT INTO deployment_jobs (id, app_id, deployment_id, status, trigger, current_step, progress_pct, log)
+        VALUES (?, ?, ?, 'pending', ?, 'init', 0, ?)
+      `).run(
+        jobId, 
+        app.id, 
+        lastDeployment.id, 
+        lastDeployment.trigger || 'recovery',
+        `[${new Date().toISOString()}] 🔧 Recovered from orphaned build state\n`
+      );
+      
+      console.log(`[JobQueue] Created recovery job ${jobId} for deployment ${lastDeployment.id}`);
+      
+      // Emit event to trigger processing
+      jobEmitter.emit('newJob', jobId);
+    } else {
+      // No running deployment found, reset app to stopped state
+      console.log(`[JobQueue] No running deployment found, resetting app ${app.name} to stopped`);
+      db.prepare(`
+        UPDATE apps SET status = 'stopped', updated_at = datetime('now') WHERE id = ?
+      `).run(app.id);
+      
+      // If there was a deployment, mark it as failed
+      if (lastDeployment) {
+        db.prepare(`
+          UPDATE deployments 
+          SET status = 'failed', finished_at = datetime('now'), log = log || ?
+          WHERE id = ?
+        `).run(`\n[${new Date().toISOString()}] ❌ Failed due to process crash during build`, lastDeployment.id);
+      }
+    }
+  }
+  
+  return orphanedApps.length;
+}
+
+/**
  * Start the job queue processor
  */
 export function startJobQueue() {

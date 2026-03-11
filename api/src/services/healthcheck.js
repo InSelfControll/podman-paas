@@ -2,6 +2,14 @@ import { getDB } from '../db/database.js';
 import { listContainers, getContainer } from './podman.js';
 
 let healthCheckInterval = null;
+let logPruneInterval = null;
+
+// Default retention: 30 days for deployment logs
+const LOG_RETENTION_DAYS = parseInt(process.env.LOG_RETENTION_DAYS || '30', 10);
+// Max log size per deployment: 500KB
+const MAX_LOG_SIZE = 500_000;
+// Prune interval: every 6 hours
+const PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Start the background health checker
@@ -270,5 +278,130 @@ export async function checkStackHealth(stackId) {
     };
   } catch (err) {
     return { healthy: false, status: 'error', error: err.message };
+  }
+}
+
+// ── Log Pruning ─────────────────────────────────────────────────────────────
+
+/**
+ * Start background log pruning task
+ * Prevents SQLite database bloat by cleaning old deployment logs
+ */
+export function startLogPruning(logger) {
+  if (logPruneInterval) return; // Already running
+  
+  // Run immediately on startup
+  pruneOldLogs(logger);
+  
+  // Schedule periodic pruning
+  logPruneInterval = setInterval(() => {
+    pruneOldLogs(logger);
+  }, PRUNE_INTERVAL_MS);
+  
+  logger?.info(`[LogPrune] Started log pruning (retention: ${LOG_RETENTION_DAYS} days, interval: 6h)`);
+}
+
+/**
+ * Stop the log pruning task
+ */
+export function stopLogPruning() {
+  if (logPruneInterval) {
+    clearInterval(logPruneInterval);
+    logPruneInterval = null;
+  }
+}
+
+/**
+ * Prune old deployment logs and truncate oversized logs
+ */
+async function pruneOldLogs(logger) {
+  const db = getDB();
+  
+  try {
+    // 1. Delete old completed/failed deployments
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - LOG_RETENTION_DAYS);
+    const cutoffIso = cutoffDate.toISOString();
+    
+    const oldDeployments = db.prepare(`
+      SELECT id, app_id, started_at FROM deployments
+      WHERE status IN ('success', 'failed')
+      AND finished_at < ?
+    `).all(cutoffIso);
+    
+    if (oldDeployments.length > 0) {
+      // Delete in batches to avoid locking the DB for too long
+      const batchSize = 100;
+      let deletedCount = 0;
+      
+      for (let i = 0; i < oldDeployments.length; i += batchSize) {
+        const batch = oldDeployments.slice(i, i + batchSize);
+        const ids = batch.map(d => d.id);
+        const placeholders = ids.map(() => '?').join(',');
+        
+        const result = db.prepare(`
+          DELETE FROM deployments WHERE id IN (${placeholders})
+        `).run(...ids);
+        
+        deletedCount += result.changes;
+      }
+      
+      logger?.info(`[LogPrune] Deleted ${deletedCount} old deployments (older than ${LOG_RETENTION_DAYS} days)`);
+    }
+    
+    // 2. Truncate oversized logs for active deployments
+    const oversizedLogs = db.prepare(`
+      SELECT id, LENGTH(log) as log_size FROM deployments
+      WHERE LENGTH(log) > ?
+    `).all(MAX_LOG_SIZE);
+    
+    for (const deployment of oversizedLogs) {
+      // Keep first 100KB and last 400KB of the log
+      const keepStart = 100_000;
+      const keepEnd = 400_000;
+      
+      db.prepare(`
+        UPDATE deployments
+        SET log = (
+          SELECT SUBSTR(log, 1, ?) || 
+                 '\n\n... [LOG TRUNCATED - too large] ...\n\n' || 
+                 SUBSTR(log, -?)
+        )
+        WHERE id = ?
+      `).run(keepStart, keepEnd, deployment.id);
+    }
+    
+    if (oversizedLogs.length > 0) {
+      logger?.info(`[LogPrune] Truncated ${oversizedLogs.length} oversized logs`);
+    }
+    
+    // 3. Also clean up old job logs
+    const oldJobs = db.prepare(`
+      SELECT id FROM deployment_jobs
+      WHERE status IN ('completed', 'failed', 'cancelled')
+      AND finished_at < datetime('now', '-${LOG_RETENTION_DAYS} days')
+    `).all();
+    
+    if (oldJobs.length > 0) {
+      const ids = oldJobs.map(j => j.id);
+      const placeholders = ids.map(() => '?').join(',');
+      
+      db.prepare(`
+        DELETE FROM deployment_jobs WHERE id IN (${placeholders})
+      `).run(...ids);
+      
+      logger?.info(`[LogPrune] Deleted ${oldJobs.length} old job records`);
+    }
+    
+    // 4. Run VACUUM to reclaim space (only if significant deletions occurred)
+    const totalDeleted = oldDeployments.length + oldJobs.length;
+    if (totalDeleted > 50) {
+      logger?.info('[LogPrune] Running VACUUM to reclaim disk space...');
+      db.exec('VACUUM');
+      logger?.info('[LogPrune] VACUUM complete');
+    }
+    
+  } catch (err) {
+    logger?.error({ err }, '[LogPrune] Error during log pruning');
   }
 }

@@ -25,8 +25,10 @@ import volumeRoutes from './routes/volumes.js';
 import { ping as podmanPing } from './services/podman.js';
 import { startHealthChecker } from './services/healthcheck.js';
 import { initProxySystem } from './services/proxy/proxy-factory.js';
-import { startJobQueue } from './services/job-queue.js';
+import { startJobQueue, recoverOrphanedBuilds } from './services/job-queue.js';
 import { shutdownPools } from './workers/pool.js';
+import { startLogPruning } from './services/healthcheck.js';
+import { startTicketCleanup } from './services/ws-tickets.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -229,6 +231,15 @@ try {
   
   // Start deployment job queue (Piscina worker pool)
   startJobQueue();
+  
+  // Recover orphaned builds from previous crashes
+  await recoverOrphanedBuilds();
+  
+  // Start background log pruning
+  startLogPruning(app.log);
+  
+  // Start WebSocket ticket cleanup
+  startTicketCleanup();
 } catch (err) {
   app.log.error(err);
   process.exit(1);

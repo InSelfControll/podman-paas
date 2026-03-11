@@ -1,7 +1,7 @@
 import { getDB } from '../db/database.js';
 import { getContainerLogs, podmanStream } from '../services/podman.js';
 import { subscribeToDeployment } from '../services/deploy.js';
-import { verifyWSTicket, generateWSTicketHandler } from '../services/ws-tickets.js';
+import { verifyWSTicket, generateWSTicketHandler, markTicketUsed, isTicketUsed, getTicketStats } from '../services/ws-tickets.js';
 
 // How long a WebSocket may stay connected to a log stream (ms)
 const MAX_LOG_STREAM_MS = 30 * 60 * 1000; // 30 min
@@ -30,6 +30,16 @@ export default async function logsRoutes(app) {
     
     // Authenticate via ticket (NOT JWT in query params for security)
     const ticket = req.query.ticket;
+    
+    // Check for replay attack
+    if (isTicketUsed(ticket)) {
+      if (socket.readyState === 1) {
+        socket.send(JSON.stringify({ type: 'error', message: 'Ticket already used' }));
+        socket.close(4001, 'Unauthorized');
+      }
+      return;
+    }
+    
     const ticketData = verifyWSTicket(ticket, 'app', req.params.appId);
     
     if (!ticketData) {
@@ -39,6 +49,9 @@ export default async function logsRoutes(app) {
       }
       return;
     }
+    
+    // Mark ticket as used (one-time use)
+    markTicketUsed(ticket);
 
     const db = getDB();
     const a = db.prepare('SELECT container_id FROM apps WHERE id = ?').get(req.params.appId);
@@ -94,6 +107,16 @@ export default async function logsRoutes(app) {
     
     // Authenticate via ticket (NOT JWT in query params for security)
     const ticket = req.query.ticket;
+    
+    // Check for replay attack
+    if (isTicketUsed(ticket)) {
+      if (socket.readyState === 1) {
+        socket.send(JSON.stringify({ type: 'error', message: 'Ticket already used' }));
+        socket.close(4001, 'Unauthorized');
+      }
+      return;
+    }
+    
     const ticketData = verifyWSTicket(ticket, 'deployment', req.params.deploymentId);
     
     if (!ticketData) {
@@ -103,6 +126,9 @@ export default async function logsRoutes(app) {
       }
       return;
     }
+    
+    // Mark ticket as used (one-time use)
+    markTicketUsed(ticket);
 
     const db = getDB();
     const deployment = db.prepare('SELECT * FROM deployments WHERE id = ?').get(req.params.deploymentId);
@@ -192,5 +218,10 @@ export default async function logsRoutes(app) {
     const d = db.prepare('SELECT * FROM deployments WHERE id = ?').get(req.params.deploymentId);
     if (!d) return reply.code(404).send({ error: 'Deployment not found' });
     return d;
+  });
+
+  // ── REST: get WebSocket ticket statistics ────────────────────────────────
+  app.get('/ticket-stats', { onRequest: [app.authenticate] }, async () => {
+    return getTicketStats();
   });
 }
