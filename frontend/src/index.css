@@ -47,6 +47,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 button:focus, button:focus-visible { outline: none; box-shadow: none; }
 button:active { outline: none; box-shadow: none; }
 
+/* NavLink styles - remove focus/active outlines */
+.nav-link { outline: none !important; box-shadow: none !important; -webkit-tap-highlight-color: transparent; }
+.nav-link:focus, .nav-link:focus-visible, .nav-link:active { outline: none !important; box-shadow: none !important; }
+.nav-link.active { outline: none !important; box-shadow: none !important; }
+
 input, textarea, select {
   font-family: var(--sans);
   background: var(--bg3);

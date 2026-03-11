@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Layers, Play, Square, Trash2, RefreshCw, Container, Activity, Settings as SettingsIcon, Download, Upload, Users, Key, FileText, Terminal as TerminalIcon, Copy, Check } from 'lucide-react';
+import { Plus, Layers, Play, Square, Trash2, RefreshCw, Container, Activity, Settings as SettingsIcon, Download, Upload, Users, Key, FileText, Terminal as TerminalIcon, Copy, Check, Edit3 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useStore } from '../lib/store.js';
 import { Button, StatusBadge, Card, EmptyState, Modal, FormField, Spinner, Badge, LogViewer, Terminal } from '../components/ui.jsx';
@@ -548,6 +548,13 @@ function ProxySettingsCard({ settings, set, onSave, saving }) {
   const [testing, setTesting] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [guide, setGuide] = useState(null);
+  // Config file management state
+  const [configFiles, setConfigFiles] = useState([]);
+  const [showConfigEditor, setShowConfigEditor] = useState(false);
+  const [editingFile, setEditingFile] = useState(null);
+  const [fileContent, setFileContent] = useState('');
+  const [templates, setTemplates] = useState([]);
+  const [savingFile, setSavingFile] = useState(false);
   const addToast = useStore(s => s.addToast);
 
   const proxyType = settings.proxy_type || 'caddy';
@@ -558,7 +565,75 @@ function ProxySettingsCard({ settings, set, onSave, saving }) {
     api.getProxyModes().then(setProxyModes).catch(() => {});
     fetchProxyStatus();
     fetchContainerStatus();
+    fetchConfigFiles();
+    fetchTemplates();
   }, []);
+
+  const fetchConfigFiles = async () => {
+    if (proxyType === 'none' || proxyType === 'custom') return;
+    try {
+      const files = await api.getProxyConfigFiles();
+      setConfigFiles(files.files || []);
+    } catch {}
+  };
+
+  const fetchTemplates = async () => {
+    if (proxyType === 'none' || proxyType === 'custom') return;
+    try {
+      const data = await api.getProxyConfigTemplates();
+      setTemplates(data.templates || []);
+    } catch {}
+  };
+
+  const handleEditFile = async (filename) => {
+    try {
+      const data = await api.getProxyConfigFile(filename);
+      setEditingFile(filename);
+      setFileContent(data.content);
+      setShowConfigEditor(true);
+    } catch (e) {
+      addToast({ message: e.message, type: 'error' });
+    }
+  };
+
+  const handleSaveFile = async () => {
+    if (!editingFile) return;
+    setSavingFile(true);
+    try {
+      await api.saveProxyConfigFile(editingFile, fileContent);
+      addToast({ message: `File saved: ${editingFile}`, type: 'success' });
+      setShowConfigEditor(false);
+      fetchConfigFiles();
+    } catch (e) {
+      addToast({ message: e.message, type: 'error' });
+    }
+    setSavingFile(false);
+  };
+
+  const handleDeleteFile = async (filename) => {
+    if (!confirm(`Delete ${filename}?`)) return;
+    try {
+      await api.deleteProxyConfigFile(filename);
+      addToast({ message: `File deleted: ${filename}`, type: 'success' });
+      fetchConfigFiles();
+    } catch (e) {
+      addToast({ message: e.message, type: 'error' });
+    }
+  };
+
+  const handleCreateFromTemplate = (template) => {
+    const timestamp = Date.now();
+    const filename = `new-config-${timestamp}.yml`;
+    setEditingFile(filename);
+    setFileContent(template.content);
+    setShowConfigEditor(true);
+  };
+
+  const handleNewFile = () => {
+    setEditingFile('new-config.yml');
+    setFileContent('# New configuration file\n');
+    setShowConfigEditor(true);
+  };
 
   useEffect(() => {
     if (proxyType) {
@@ -926,6 +1001,121 @@ function ProxySettingsCard({ settings, set, onSave, saving }) {
               )}
             </div>
           </details>
+        </div>
+      )}
+
+      {/* Configuration Files Management */}
+      {proxyType !== 'none' && proxyType !== 'custom' && (
+        <div style={{ marginBottom: '16px' }}>
+          <details>
+            <summary style={{ cursor: 'pointer', fontSize: '13px', color: 'var(--text2)', marginBottom: '8px' }}>
+              Configuration Files {configFiles.length > 0 && `(${configFiles.length})`}
+            </summary>
+            
+            <div style={{ padding: '12px', background: 'var(--bg3)', borderRadius: 'var(--radius)', marginTop: '8px' }}>
+              {/* Config Files List */}
+              {configFiles.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ fontSize: '12px', fontWeight: 600, margin: '0 0 8px 0', color: 'var(--text)' }}>Dynamic Configs:</p>
+                  {configFiles.map(file => (
+                    <div key={file.name} style={{ 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center',
+                      padding: '8px 12px',
+                      background: 'var(--bg2)',
+                      borderRadius: 'var(--radius)',
+                      marginBottom: '6px'
+                    }}>
+                      <div>
+                        <span style={{ fontSize: '12px', fontFamily: 'var(--mono)', color: 'var(--text)' }}>{file.name}</span>
+                        {file.isMain && <Badge variant="info" style={{ marginLeft: '8px' }}>main</Badge>}
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <Button size="sm" variant="ghost" onClick={() => handleEditFile(file.name)}>
+                          <Edit3 size={12} /> Edit
+                        </Button>
+                        {!file.isMain && (
+                          <Button size="sm" variant="ghost" onClick={() => handleDeleteFile(file.name)}>
+                            <Trash2 size={12} />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Templates */}
+              {templates.length > 0 && (
+                <div style={{ marginBottom: '16px' }}>
+                  <p style={{ fontSize: '12px', fontWeight: 600, margin: '0 0 8px 0', color: 'var(--text)' }}>Templates:</p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {templates.slice(0, 4).map((template, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleCreateFromTemplate(template)}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: '11px',
+                          background: 'var(--bg4)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius)',
+                          color: 'var(--text2)',
+                          cursor: 'pointer'
+                        }}
+                        title={template.description}
+                      >
+                        {template.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* New File Button */}
+              <Button size="sm" variant="secondary" onClick={handleNewFile}>
+                <FileText size={12} /> New Config File
+              </Button>
+            </div>
+          </details>
+
+          {/* Config Editor Modal */}
+          {showConfigEditor && (
+            <Modal open={showConfigEditor} onClose={() => setShowConfigEditor(false)} title={`Edit: ${editingFile}`} width={800}>
+              <div style={{ marginBottom: '12px' }}>
+                <p style={{ fontSize: '12px', color: 'var(--text3)', marginBottom: '8px' }}>
+                  Editing: {editingFile}
+                </p>
+                <textarea
+                  value={fileContent}
+                  onChange={e => setFileContent(e.target.value)}
+                  style={{
+                    width: '100%',
+                    height: '400px',
+                    fontFamily: 'var(--mono)',
+                    fontSize: '12px',
+                    lineHeight: '1.5',
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)',
+                    padding: '12px',
+                    color: 'var(--text)',
+                    resize: 'vertical'
+                  }}
+                  spellCheck={false}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <Button size="sm" variant="secondary" onClick={() => setShowConfigEditor(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleSaveFile} loading={savingFile}>
+                  <Check size={12} /> Save Configuration
+                </Button>
+              </div>
+            </Modal>
+          )}
         </div>
       )}
 

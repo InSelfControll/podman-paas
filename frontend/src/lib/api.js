@@ -75,6 +75,17 @@ export const api = {
   stopProxyContainer:    ()  => request('POST',   '/proxy/container/stop'),
   getProxyContainers:  ()    => request('GET',    '/proxy/containers'),
   getProxyCompose:     ()    => request('GET',    '/proxy/compose'),
+  // Proxy Configuration File Management
+  getProxySetupStatus: ()    => request('GET',    '/proxy/setup-status'),
+  setupProxy:          (body) => request('POST',   '/proxy/setup', body),
+  getProxyConfigFiles: ()    => request('GET',    '/proxy/config/files'),
+  getProxyConfigFile:  (name) => request('GET',    `/proxy/config/files/${name}`),
+  saveProxyConfigFile: (name, content) => request('PUT', `/proxy/config/files/${name}`, { content }),
+  deleteProxyConfigFile:(name) => request('DELETE', `/proxy/config/files/${name}`),
+  getProxyMainConfig:  ()    => request('GET',    '/proxy/config/main'),
+  saveProxyMainConfig: (content) => request('PUT', '/proxy/config/main', { content }),
+  getProxyConfigTemplates: () => request('GET',    '/proxy/config/templates'),
+  validateProxyConfig: (content) => request('POST', '/proxy/config/validate', { content }),
   
   // Templates
   getTemplates:        (p = {}) => { const qs = new URLSearchParams(p).toString(); return request('GET', `/templates${qs ? `?${qs}` : ''}`); },

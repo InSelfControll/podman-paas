@@ -48,6 +48,7 @@ export default function Sidebar() {
             key={to}
             to={to}
             end={to === '/'}
+            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
             style={({ isActive }) => ({
               display: 'flex', alignItems: 'center', gap: '10px',
               padding: '8px 12px', borderRadius: 'var(--radius)',
@@ -57,19 +58,9 @@ export default function Sidebar() {
               textDecoration: 'none',
               transition: 'all 0.15s',
               border: isActive ? '1px solid var(--border2)' : '1px solid transparent',
+              outline: 'none',
+              boxShadow: 'none',
             })}
-            onMouseEnter={e => {
-              if (!e.currentTarget.getAttribute('aria-current')) {
-                e.currentTarget.style.color = 'var(--text)';
-                e.currentTarget.style.background = 'var(--bg3)';
-              }
-            }}
-            onMouseLeave={e => {
-              if (!e.currentTarget.getAttribute('aria-current')) {
-                e.currentTarget.style.color = '';
-                e.currentTarget.style.background = '';
-              }
-            }}
           >
             <Icon size={15} />
             {label}
