@@ -80,29 +80,100 @@ export function Badge({ children, variant = 'default' }) {
 
 // ── StatusBadge ─────────────────────────────────────────────────────────────
 export function StatusBadge({ status }) {
+  // Status color mapping with specific colors:
+  // - Running: Green (success)
+  // - Stopped: Shiny grey (silver/metallic)
+  // - Error: Bright Red (danger)
+  // - Getting ready (building/starting): Orange (warning)
   const map = {
-    running: { variant: 'success', dot: true },
-    building: { variant: 'warning', dot: true, pulse: true },
-    stopped: { variant: 'default', dot: true },
-    error: { variant: 'danger', dot: true },
-    pending: { variant: 'info', dot: true, pulse: true },
-    success: { variant: 'success' },
-    failed: { variant: 'danger' },
-    starting: { variant: 'info', dot: true, pulse: true },
+    running: { variant: 'success', dot: true, color: '#22c55e', glow: true },
+    building: { variant: 'warning', dot: true, pulse: true, color: '#f97316' },
+    stopped: { variant: 'default', dot: true, color: '#94a3b8', shiny: true },
+    error: { variant: 'danger', dot: true, color: '#ef4444', bright: true },
+    pending: { variant: 'info', dot: true, pulse: true, color: '#3b82f6' },
+    success: { variant: 'success', color: '#22c55e' },
+    failed: { variant: 'danger', color: '#ef4444', bright: true },
+    starting: { variant: 'warning', dot: true, pulse: true, color: '#f97316' },
+    restarting: { variant: 'warning', dot: true, pulse: true, color: '#f59e0b' },
   };
   const cfg = map[status] || map.stopped;
 
+  // Custom styles based on status
+  const getStatusStyle = () => {
+    const base = {
+      fontSize: '11px', fontWeight: 600,
+      padding: '2px 8px', borderRadius: '100px',
+      display: 'inline-flex', alignItems: 'center', gap: '4px',
+      fontFamily: 'var(--mono)', letterSpacing: '0.03em',
+      textTransform: 'uppercase',
+      border: '1px solid',
+    };
+
+    switch (status) {
+      case 'running':
+        return {
+          ...base,
+          background: 'rgba(34, 197, 94, 0.15)',
+          color: '#22c55e',
+          borderColor: 'rgba(34, 197, 94, 0.35)',
+          boxShadow: '0 0 8px rgba(34, 197, 94, 0.25)',
+        };
+      case 'stopped':
+        return {
+          ...base,
+          background: 'linear-gradient(145deg, rgba(148, 163, 184, 0.15), rgba(100, 116, 139, 0.1))',
+          color: '#94a3b8',
+          borderColor: 'rgba(148, 163, 184, 0.4)',
+          textShadow: '0 0 2px rgba(148, 163, 184, 0.5)',
+        };
+      case 'error':
+      case 'failed':
+        return {
+          ...base,
+          background: 'rgba(239, 68, 68, 0.15)',
+          color: '#ff5555',
+          borderColor: 'rgba(239, 68, 68, 0.5)',
+          boxShadow: '0 0 10px rgba(239, 68, 68, 0.3)',
+          textShadow: '0 0 2px rgba(239, 68, 68, 0.5)',
+        };
+      case 'building':
+      case 'starting':
+        return {
+          ...base,
+          background: 'rgba(249, 115, 22, 0.15)',
+          color: '#fb923c',
+          borderColor: 'rgba(249, 115, 22, 0.4)',
+        };
+      case 'pending':
+        return {
+          ...base,
+          background: 'rgba(59, 130, 246, 0.15)',
+          color: '#60a5fa',
+          borderColor: 'rgba(59, 130, 246, 0.35)',
+        };
+      default:
+        return {
+          ...base,
+          background: 'var(--bg4)',
+          color: 'var(--text2)',
+          borderColor: 'var(--border)',
+        };
+    }
+  };
+
   return (
-    <Badge variant={cfg.variant}>
+    <span style={getStatusStyle()}>
       {cfg.dot && (
         <span style={{
-          width: 5, height: 5, borderRadius: '50%',
-          background: 'currentColor', display: 'inline-block',
-          animation: cfg.pulse ? 'pulse 1.5s ease infinite' : 'none'
+          width: 6, height: 6, borderRadius: '50%',
+          background: cfg.color || 'currentColor',
+          display: 'inline-block',
+          animation: cfg.pulse ? 'pulse 1.5s ease infinite' : 'none',
+          boxShadow: cfg.glow ? `0 0 6px ${cfg.color}` : 'none',
         }} />
       )}
       {status}
-    </Badge>
+    </span>
   );
 }
 
